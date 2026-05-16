@@ -11,9 +11,15 @@ services:
       - VPN_PASS=${VPN_PASS:-}
     volumes:
       - ./1757298463444.ovpn:/vpn/vpn.conf.orig:ro
+      - /etc/localtime:/etc/localtime:ro
     ports:
       - "1080:1080"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "ip addr show tun0 2>/dev/null | grep -q 'inet '"]
+      interval: 5s
+      timeout: 2s
+      retries: 1
 
   socks5:
     image: serjs/go-socks5-proxy
@@ -24,4 +30,25 @@ services:
       - REQUIRE_AUTH=false
     depends_on:
       - vpn
+    restart: "no"
+
+  socks-supervisor:
+    image: docker:cli
+    container_name: socks-supervisor
     restart: unless-stopped
+    depends_on:
+      - vpn
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: >
+      sh -c '
+        while true; do
+          status=$$(docker inspect --format="{{.State.Health.Status}}" vpn 2>/dev/null || echo none)
+          if [ "$$status" = "healthy" ]; then
+            docker start socks5 >/dev/null 2>&1 || true
+          else
+            docker stop -t 1 socks5 >/dev/null 2>&1 || true
+          fi
+          sleep 3
+        done
+      '
